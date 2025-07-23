@@ -1,6 +1,6 @@
 # Stock Screener
 
-A comprehensive stock screening application built with Python and Next.js that uses Zerodha Kite Connect API to fetch historical and live stock data, calculate technical indicators, and generate trading signals.
+A comprehensive stock screening application built with Python and React that uses Zerodha Kite Connect API to fetch historical and live stock data, calculate technical indicators, and generate trading signals.
 
 ## Features
 
@@ -9,7 +9,7 @@ A comprehensive stock screening application built with Python and Next.js that u
 - **Trend Analysis**: Direction detection (ascending/descending/constant) using linear regression
 - **Trading Signals**: Buy/Sell/Hold recommendations based on indicator values and trends
 - **Backtesting**: Historical data analysis and strategy testing
-- **Modern Web Interface**: Built with Next.js 14, TypeScript, and shadcn/ui
+- **Modern Web Interface**: Built with React, TypeScript, and Material-UI
 
 ## Project Structure
 
@@ -38,12 +38,12 @@ stock-screener/
 ### Frontend Setup
 1. Navigate to `frontend/`
 2. Install dependencies: `npm install`
-3. Run: `npm run dev`
+3. Run: `npm start`
 
 ## Technologies Used
 
 - **Backend**: Python, pandas, kiteconnect, python-dotenv
-- **Frontend**: Next.js 14, TypeScript, shadcn/ui
+- **Frontend**: React, TypeScript, Material-UI, Tailwind CSS
 - **API**: Zerodha Kite Connect
 - **Data Analysis**: Technical indicators, trend analysis
 
