@@ -42,7 +42,7 @@ stock-screener/
 
 ## Technologies Used
 
-- **Backend**: Python, pandas, kiteconnect, python-dotenv
+- **Backend**: Python, FastAPI, pandas, kiteconnect, python-dotenv
 - **Frontend**: React, TypeScript, Material-UI, Tailwind CSS
 - **API**: Zerodha Kite Connect
 - **Data Analysis**: Technical indicators, trend analysis
