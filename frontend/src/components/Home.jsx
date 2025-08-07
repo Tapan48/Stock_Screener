@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import stockScreenerAPI from "../services/api";
+import StockDetail from "./StockDetail";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const Home = () => {
@@ -75,7 +76,12 @@ const Home = () => {
 
   // Handle stock row click
   const handleStockClick = (stock) => {
-    fetchStockHistory(stock.symbol);
+    setSelectedStock(stock.symbol);
+  };
+
+  // Handle back button click
+  const handleBackToList = () => {
+    setSelectedStock(null);
   };
 
   // Close history modal
@@ -304,6 +310,10 @@ const Home = () => {
         </div>
       </div>
     );
+  }
+
+  if (selectedStock) {
+    return <StockDetail symbol={selectedStock} onBack={handleBackToList} />;
   }
 
   return (
