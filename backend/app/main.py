@@ -659,7 +659,7 @@ async def get_stock_details(symbol: str):
     }
 
 @app.get("/api/stocks/{symbol}/history")
-async def get_stock_history(symbol: str, days: int = 100):
+async def get_stock_history(symbol: str, days: int = 30):
     # Find stock by symbol
     all_stocks = buy_stocks_list + sell_stocks_list
     stock = next((s for s in all_stocks if s["tradingsymbol"] == symbol), None)
