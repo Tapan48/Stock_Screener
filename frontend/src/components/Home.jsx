@@ -1,3 +1,4 @@
+// Stock Screener Component with comprehensive signal filtering
 import {
   AlertCircle,
   Loader2,
@@ -13,7 +14,7 @@ import { Badge } from "./ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const Home = () => {
-  const [selectedSignal, setSelectedSignal] = useState("buy");
+  const [selectedSignal, setSelectedSignal] = useState("all");
   const [stockSignals, setStockSignals] = useState({
     buy_signals: [],
     sell_signals: [],
@@ -22,7 +23,6 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
-  const [liveData, setLiveData] = useState([]);
   const [websocketConnected, setWebsocketConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -55,7 +55,7 @@ const Home = () => {
 
   // Handle live data updates from WebSocket
   const handleLiveDataUpdate = useCallback((data) => {
-    setLiveData(data);
+    // setLiveData(data); // This line was removed as per the edit hint
     setLastUpdate(new Date().toLocaleTimeString());
   }, []);
 
@@ -147,8 +147,20 @@ const Home = () => {
         return stockSignals.buy_signals || [];
       case "sell":
         return stockSignals.sell_signals || [];
+      case "hold":
+        return stockSignals.hold_signals || [];
+      case "all":
+        return [
+          ...(stockSignals.buy_signals || []),
+          ...(stockSignals.sell_signals || []),
+          ...(stockSignals.hold_signals || []),
+        ];
       default:
-        return [];
+        return [
+          ...(stockSignals.buy_signals || []),
+          ...(stockSignals.sell_signals || []),
+          ...(stockSignals.hold_signals || []),
+        ];
     }
   };
 
@@ -268,6 +280,14 @@ const Home = () => {
               <TrendingDown className="w-4 h-4 mr-2" />
               Sell Signals ({stockSignals.sell_signals?.length || 0})
             </ToggleGroupItem>
+            <ToggleGroupItem value="hold" className="px-6 py-2">
+              <Minus className="w-4 h-4 mr-2" />
+              Hold Signals ({stockSignals.hold_signals?.length || 0})
+            </ToggleGroupItem>
+            <ToggleGroupItem value="all" className="px-6 py-2">
+              <TrendingUp className="w-4 h-4 mr-2" />
+              All Signals ({stocks.length || 0})
+            </ToggleGroupItem>
           </ToggleGroup>
         </div>
 
@@ -297,16 +317,18 @@ const Home = () => {
                 className="px-6 py-4 hover:bg-gray-50 transition-colors"
               >
                 <div className="grid grid-cols-12 gap-6 items-center">
-                  {/* Section (Buy/Sell) */}
+                  {/* Section (Buy/Sell/Hold) */}
                   <div className="col-span-1">
                     <div
                       className={`px-3 py-1 rounded-full text-xs font-medium text-center ${
-                        selectedSignal === "buy"
+                        stock.signal === "BUY"
                           ? "bg-green-100 text-green-800"
-                          : "bg-red-100 text-red-800"
+                          : stock.signal === "SELL"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-gray-100 text-gray-800"
                       }`}
                     >
-                      {selectedSignal.toUpperCase()}
+                      {stock.signal}
                     </div>
                   </div>
 
