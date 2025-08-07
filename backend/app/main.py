@@ -672,9 +672,35 @@ async def get_stock_history(symbol: str):
         return {"error": "Historical data not available"}
     
     df = historical_data[token]
+    
+    # Convert DataFrame to a JSON-compatible format
+    history_records = []
+    
+    for index, row in df.iterrows():
+        record = {}
+        for column in df.columns:
+            value = row[column]
+            
+            # Handle different data types
+            if pd.isna(value) or value is None:
+                record[column] = None
+            elif isinstance(value, (np.integer, np.int64)):
+                record[column] = int(value)
+            elif isinstance(value, (np.floating, np.float64)):
+                record[column] = float(value)
+            elif isinstance(value, (np.datetime64, pd.Timestamp)):
+                record[column] = value.isoformat() if hasattr(value, 'isoformat') else str(value)
+            elif isinstance(value, str):
+                record[column] = value
+            else:
+                # Convert any other types to string
+                record[column] = str(value)
+        
+        history_records.append(record)
+    
     return {
         "symbol": symbol,
-        "history": df.to_dict("records")
+        "history": history_records
     }
 
 @app.get("/api/stocks/popular")

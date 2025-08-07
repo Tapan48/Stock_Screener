@@ -8,6 +8,7 @@ import {
   TrendingUp,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import stockScreenerAPI from "../services/api";
@@ -27,6 +28,12 @@ const Home = () => {
   const [systemStatus, setSystemStatus] = useState(null);
   const [websocketConnected, setWebsocketConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
+
+  // Stock history modal state
+  const [selectedStock, setSelectedStock] = useState(null);
+  const [stockHistory, setStockHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // Fetch stock signals from API
   const fetchStockSignals = async () => {
@@ -48,6 +55,34 @@ const Home = () => {
       console.error("Error fetching holdings data:", error);
       setError("Failed to fetch holdings data");
     }
+  };
+
+  // Fetch stock history
+  const fetchStockHistory = async (symbol) => {
+    setHistoryLoading(true);
+    try {
+      const data = await stockScreenerAPI.getStockHistory(symbol);
+      setStockHistory(data.history || []);
+      setSelectedStock(symbol);
+      setShowHistoryModal(true);
+    } catch (error) {
+      console.error("Error fetching stock history:", error);
+      setError("Failed to fetch stock history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // Handle stock row click
+  const handleStockClick = (stock) => {
+    fetchStockHistory(stock.symbol);
+  };
+
+  // Close history modal
+  const closeHistoryModal = () => {
+    setShowHistoryModal(false);
+    setSelectedStock(null);
+    setStockHistory([]);
   };
 
   // Fetch system status
@@ -410,7 +445,8 @@ const Home = () => {
             {stocks.map((stock, index) => (
               <div
                 key={index}
-                className="px-6 py-4 hover:bg-gray-50 transition-colors"
+                className="px-6 py-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                onClick={() => handleStockClick(stock)}
               >
                 <div className="grid grid-cols-12 gap-6 items-center">
                   {/* Section (Buy/Sell/Hold/Holdings) */}
@@ -561,6 +597,107 @@ const Home = () => {
             Refresh Data
           </button>
         </div>
+
+        {/* Stock History Modal */}
+        {showHistoryModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  {selectedStock} - Historical Data
+                </h2>
+                <button
+                  onClick={closeHistoryModal}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 overflow-y-auto max-h-[60vh]">
+                {historyLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                    <span className="ml-2 text-gray-600">
+                      Loading history...
+                    </span>
+                  </div>
+                ) : stockHistory.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-2 px-4">Date</th>
+                          <th className="text-right py-2 px-4">Open</th>
+                          <th className="text-right py-2 px-4">High</th>
+                          <th className="text-right py-2 px-4">Low</th>
+                          <th className="text-right py-2 px-4">Close</th>
+                          <th className="text-right py-2 px-4">Volume</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stockHistory.map((record, index) => (
+                          <tr key={index} className="border-b hover:bg-gray-50">
+                            <td className="py-2 px-4">
+                              {new Date(record.date).toLocaleDateString()}
+                            </td>
+                            <td className="text-right py-2 px-4">
+                              ₹
+                              {record.open
+                                ? parseFloat(record.open).toFixed(2)
+                                : "N/A"}
+                            </td>
+                            <td className="text-right py-2 px-4">
+                              ₹
+                              {record.high
+                                ? parseFloat(record.high).toFixed(2)
+                                : "N/A"}
+                            </td>
+                            <td className="text-right py-2 px-4">
+                              ₹
+                              {record.low
+                                ? parseFloat(record.low).toFixed(2)
+                                : "N/A"}
+                            </td>
+                            <td className="text-right py-2 px-4 font-semibold">
+                              ₹
+                              {record.close
+                                ? parseFloat(record.close).toFixed(2)
+                                : "N/A"}
+                            </td>
+                            <td className="text-right py-2 px-4">
+                              {record.volume
+                                ? parseInt(record.volume).toLocaleString()
+                                : "N/A"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500">
+                      No historical data available
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex justify-end p-6 border-t">
+                <button
+                  onClick={closeHistoryModal}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
