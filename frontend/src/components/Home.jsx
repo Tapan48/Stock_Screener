@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import stockScreenerAPI from "../services/api";
-import { Badge } from "./ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const Home = () => {
@@ -110,9 +109,21 @@ const Home = () => {
 
   // Initial data fetch
   useEffect(() => {
-    fetchStockSignals();
-    fetchSystemStatus();
-    fetchHoldingsData();
+    const loadInitialData = async () => {
+      try {
+        await Promise.all([
+          fetchStockSignals(),
+          fetchSystemStatus(),
+          fetchHoldingsData(),
+        ]);
+      } catch (error) {
+        console.error("Error loading initial data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadInitialData();
   }, []);
 
   // Auto-refresh every 30 seconds (fallback)
@@ -356,12 +367,6 @@ const Home = () => {
                       <div className="font-semibold text-gray-900">
                         {stock.symbol}
                       </div>
-                      <Badge
-                        variant={getSignalBadgeVariant(stock.signal)}
-                        className="text-xs"
-                      >
-                        {stock.signal}
-                      </Badge>
                     </div>
                   </div>
 
