@@ -1,6 +1,7 @@
 // Stock Screener Component with comprehensive signal filtering
 import {
   AlertCircle,
+  ChevronDown,
   Loader2,
   Minus,
   TrendingDown,
@@ -14,6 +15,7 @@ import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const Home = () => {
   const [selectedSignal, setSelectedSignal] = useState("all");
+  const [sortBy, setSortBy] = useState("signal"); // Default sort by signal
   const [stockSignals, setStockSignals] = useState({
     buy_signals: [],
     sell_signals: [],
@@ -185,7 +187,53 @@ const Home = () => {
     }
   };
 
-  const stocks = getStocksBySignal();
+  const sortStocks = (stocks) => {
+    if (!stocks || stocks.length === 0) return stocks;
+
+    const sortedStocks = [...stocks];
+
+    switch (sortBy) {
+      case "signal":
+        // Sort by signal priority: BUY > SELL > HOLD
+        const signalPriority = { BUY: 1, SELL: 2, HOLD: 3 };
+        return sortedStocks.sort(
+          (a, b) => signalPriority[a.signal] - signalPriority[b.signal]
+        );
+
+      case "price_change":
+        // Sort by price change (highest gainers first)
+        return sortedStocks.sort((a, b) => (b.change || 0) - (a.change || 0));
+
+      case "rsi":
+        // Sort by RSI (oversold to overbought)
+        return sortedStocks.sort(
+          (a, b) => (a.indicators?.rsi || 0) - (b.indicators?.rsi || 0)
+        );
+
+      case "volume":
+        // Sort by volume (highest first)
+        return sortedStocks.sort((a, b) => (b.volume || 0) - (a.volume || 0));
+
+      case "alphabetical":
+        // Sort alphabetically by symbol
+        return sortedStocks.sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+      case "price":
+        // Sort by current price (highest first)
+        return sortedStocks.sort((a, b) => (b.close || 0) - (a.close || 0));
+
+      case "latest_update":
+        // Sort by timestamp (most recent first)
+        return sortedStocks.sort(
+          (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+        );
+
+      default:
+        return sortedStocks;
+    }
+  };
+
+  const stocks = sortStocks(getStocksBySignal());
 
   if (loading) {
     return (
@@ -287,33 +335,56 @@ const Home = () => {
 
         {/* Toggle Bar */}
         <div className="mb-8">
-          <ToggleGroup
-            type="single"
-            value={selectedSignal}
-            onValueChange={(value) => value && setSelectedSignal(value)}
-            className="bg-white shadow-sm border rounded-lg p-1"
-          >
-            <ToggleGroupItem value="buy" className="px-6 py-2">
-              <TrendingUp className="w-4 h-4 mr-2" />
-              Buy Signals ({stockSignals.buy_signals?.length || 0})
-            </ToggleGroupItem>
-            <ToggleGroupItem value="sell" className="px-6 py-2">
-              <TrendingDown className="w-4 h-4 mr-2" />
-              Sell Signals ({stockSignals.sell_signals?.length || 0})
-            </ToggleGroupItem>
-            <ToggleGroupItem value="hold" className="px-6 py-2">
-              <Minus className="w-4 h-4 mr-2" />
-              Hold Signals ({stockSignals.hold_signals?.length || 0})
-            </ToggleGroupItem>
-            <ToggleGroupItem value="all" className="px-6 py-2">
-              <TrendingUp className="w-4 h-4 mr-2" />
-              All Signals ({stocks.length || 0})
-            </ToggleGroupItem>
-            <ToggleGroupItem value="holdings" className="px-6 py-2">
-              <TrendingUp className="w-4 h-4 mr-2" />
-              Holdings ({holdingsData.length || 0})
-            </ToggleGroupItem>
-          </ToggleGroup>
+          <div className="flex items-center justify-between">
+            <div className="flex-1"></div> {/* Left spacer */}
+            <ToggleGroup
+              type="single"
+              value={selectedSignal}
+              onValueChange={(value) => value && setSelectedSignal(value)}
+              className="bg-white shadow-sm border rounded-lg p-1"
+            >
+              <ToggleGroupItem value="buy" className="px-6 py-2">
+                <TrendingUp className="w-4 h-4 mr-2" />
+                Buy Signals ({stockSignals.buy_signals?.length || 0})
+              </ToggleGroupItem>
+              <ToggleGroupItem value="sell" className="px-6 py-2">
+                <TrendingDown className="w-4 h-4 mr-2" />
+                Sell Signals ({stockSignals.sell_signals?.length || 0})
+              </ToggleGroupItem>
+              <ToggleGroupItem value="hold" className="px-6 py-2">
+                <Minus className="w-4 h-4 mr-2" />
+                Hold Signals ({stockSignals.hold_signals?.length || 0})
+              </ToggleGroupItem>
+              <ToggleGroupItem value="all" className="px-6 py-2">
+                <TrendingUp className="w-4 h-4 mr-2" />
+                All Signals ({stocks.length || 0})
+              </ToggleGroupItem>
+              <ToggleGroupItem value="holdings" className="px-6 py-2">
+                <TrendingUp className="w-4 h-4 mr-2" />
+                Holdings ({holdingsData.length || 0})
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <div className="flex-1 flex justify-end">
+              {" "}
+              {/* Right spacer with sort dropdown */}
+              <div className="relative">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="appearance-none bg-white border border-gray-300 rounded-lg px-4 py-2 pr-8 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="signal">Sort by Signal</option>
+                  <option value="price_change">Sort by Price Change</option>
+                  <option value="rsi">Sort by RSI</option>
+                  <option value="volume">Sort by Volume</option>
+                  <option value="alphabetical">Sort Alphabetically</option>
+                  <option value="price">Sort by Price</option>
+                  <option value="latest_update">Sort by Latest Update</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Stock Cards Grid */}

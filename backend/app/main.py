@@ -37,11 +37,11 @@ buy_stocks_symbols = [
     "ITC",
     "SBIN",
     "BHARTIARTL",
-    "AXISBANK"
+    "AXISBANK"        ####  add important stocks here  nse and bse both
 ]
 
 # Load instrument tokens
-df = pd.read_csv("instrument_tokens.csv")
+df = pd.read_csv("instrument_tokens.csv")    ###  nse stocks only need to get bse tokens as well
 buy_stocks = df[df["tradingsymbol"].isin(buy_stocks_symbols)]
 buy_stocks_list = buy_stocks[["tradingsymbol", "instrument_token", "name"]].to_dict("records")
 
