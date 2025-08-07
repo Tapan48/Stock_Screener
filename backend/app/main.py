@@ -488,6 +488,54 @@ async def health_check():
 async def get_stock_signals_endpoint():
     return get_stock_signals()
 
+@app.get("/api/stocks/holdings")
+async def get_holdings_stocks():
+    """Get holdings stocks with their details"""
+    holdings_signals = []
+    
+    for stock in sell_stocks_list:
+        token = stock["instrument_token"]
+        symbol = stock["tradingsymbol"]
+        name = stock["name"]
+        
+        if token in indicators:
+            indicator_data = indicators[token]
+            
+            # Get directions
+            directions = get_indicator_directions(historical_data[token])
+            
+            # Create stock indicator
+            stock_indicator = StockIndicator(
+                rsi=indicator_data["rsi"],
+                rsi_direction=directions.get("rsi_direction", "CONSTANT"),
+                ma_44=indicator_data["ma_44"],
+                ma_44_direction=directions.get("ma_44_direction", "CONSTANT"),
+                bb_upper=indicator_data["bb_upper"],
+                bb_upper_direction=directions.get("bb_upper_direction", "CONSTANT"),
+                bb_lower=indicator_data["bb_lower"],
+                bb_lower_direction=directions.get("bb_lower_direction", "CONSTANT")
+            )
+            
+            # Apply trading logic
+            signal_result = apply_trading_logic_with_direction(indicator_data, historical_data[token])
+            
+            # Create stock signal
+            stock_signal = StockSignal(
+                symbol=symbol,
+                name=name,
+                close=indicator_data["close"],
+                change=indicator_data.get("change", 0),
+                change_percent=indicator_data.get("change_percent", 0),
+                volume=indicator_data.get("volume", 0),
+                signal=signal_result,  # signal_result is already a string
+                indicators=stock_indicator,
+                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+            
+            holdings_signals.append(stock_signal)
+    
+    return {"holdings": holdings_signals}
+
 @app.get("/api/stocks/{symbol}")
 async def get_stock_details(symbol: str):
     # Find stock by symbol
@@ -536,16 +584,7 @@ async def get_stock_history(symbol: str):
 @app.get("/api/stocks/popular")
 async def get_popular_stocks():
     # Return the buy stocks list as popular stocks
-    return {
-        "stocks": [
-            {
-                "symbol": stock["tradingsymbol"],
-                "name": stock["name"],
-                "instrument_token": stock["instrument_token"]
-            }
-            for stock in buy_stocks_list
-        ]
-    }
+    return {"stocks": buy_stocks_list}
 
 # --- WEBSOCKET ENDPOINTS ---
 @app.websocket("/ws/live")
