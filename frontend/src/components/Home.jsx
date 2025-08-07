@@ -20,6 +20,7 @@ const Home = () => {
     sell_signals: [],
     hold_signals: [],
   });
+  const [holdingsData, setHoldingsData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
@@ -29,17 +30,22 @@ const Home = () => {
   // Fetch stock signals from API
   const fetchStockSignals = async () => {
     try {
-      setLoading(true);
-      setError(null);
       const data = await stockScreenerAPI.getStockSignals();
       setStockSignals(data);
-    } catch (err) {
-      setError(
-        "Failed to fetch stock signals. Please check if the backend is running."
-      );
-      console.error("Error fetching stock signals:", err);
-    } finally {
-      setLoading(false);
+      setLastUpdate(new Date().toLocaleTimeString());
+    } catch (error) {
+      console.error("Error fetching stock signals:", error);
+      setError("Failed to fetch stock signals");
+    }
+  };
+
+  const fetchHoldingsData = async () => {
+    try {
+      const data = await stockScreenerAPI.getHoldingsStocks();
+      setHoldingsData(data.holdings || []);
+    } catch (error) {
+      console.error("Error fetching holdings data:", error);
+      setError("Failed to fetch holdings data");
     }
   };
 
@@ -106,6 +112,7 @@ const Home = () => {
   useEffect(() => {
     fetchStockSignals();
     fetchSystemStatus();
+    fetchHoldingsData();
   }, []);
 
   // Auto-refresh every 30 seconds (fallback)
@@ -114,6 +121,7 @@ const Home = () => {
       if (!websocketConnected) {
         fetchStockSignals();
         fetchSystemStatus();
+        fetchHoldingsData();
       }
     }, 30000);
 
@@ -149,6 +157,8 @@ const Home = () => {
         return stockSignals.sell_signals || [];
       case "hold":
         return stockSignals.hold_signals || [];
+      case "holdings":
+        return holdingsData || [];
       case "all":
         return [
           ...(stockSignals.buy_signals || []),
@@ -288,6 +298,10 @@ const Home = () => {
               <TrendingUp className="w-4 h-4 mr-2" />
               All Signals ({stocks.length || 0})
             </ToggleGroupItem>
+            <ToggleGroupItem value="holdings" className="px-6 py-2">
+              <TrendingUp className="w-4 h-4 mr-2" />
+              Holdings ({holdingsData.length || 0})
+            </ToggleGroupItem>
           </ToggleGroup>
         </div>
 
@@ -317,18 +331,22 @@ const Home = () => {
                 className="px-6 py-4 hover:bg-gray-50 transition-colors"
               >
                 <div className="grid grid-cols-12 gap-6 items-center">
-                  {/* Section (Buy/Sell/Hold) */}
+                  {/* Section (Buy/Sell/Hold/Holdings) */}
                   <div className="col-span-1">
                     <div
                       className={`px-3 py-1 rounded-full text-xs font-medium text-center ${
-                        stock.signal === "BUY"
+                        selectedSignal === "holdings"
+                          ? "bg-blue-100 text-blue-800"
+                          : stock.signal === "BUY"
                           ? "bg-green-100 text-green-800"
                           : stock.signal === "SELL"
                           ? "bg-red-100 text-red-800"
                           : "bg-gray-100 text-gray-800"
                       }`}
                     >
-                      {stock.signal}
+                      {selectedSignal === "holdings"
+                        ? "HOLDINGS"
+                        : stock.signal}
                     </div>
                   </div>
 
