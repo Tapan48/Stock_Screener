@@ -170,40 +170,52 @@ const StockDetail = ({ symbol, onBack }) => {
         <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
           <div className="px-6 py-4 border-b">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">
-                Historical Data
-              </h2>
+              <div className="flex-1"></div>
               <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setSelectedDays("30")}
-                  className={`px-4 py-2 rounded-lg ${
-                    selectedDays === "30"
-                      ? "bg-blue-100 text-blue-700 font-medium"
-                      : "bg-white text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  30 Days
-                </button>
-                <button
-                  onClick={() => setSelectedDays("60")}
-                  className={`px-4 py-2 rounded-lg ${
-                    selectedDays === "60"
-                      ? "bg-blue-100 text-blue-700 font-medium"
-                      : "bg-white text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  60 Days
-                </button>
-                <button
-                  onClick={() => setSelectedDays("100")}
-                  className={`px-4 py-2 rounded-lg ${
-                    selectedDays === "100"
-                      ? "bg-blue-100 text-blue-700 font-medium"
-                      : "bg-white text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  100 Days
-                </button>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Historical Data
+                </h2>
+                <span className="text-lg font-medium text-gray-700">
+                  (
+                  {new Date(
+                    Date.now() - parseInt(selectedDays) * 24 * 60 * 60 * 1000
+                  ).toLocaleDateString()}{" "}
+                  - {new Date().toLocaleDateString()})
+                </span>
+              </div>
+              <div className="flex-1 flex justify-end">
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setSelectedDays("30")}
+                    className={`px-4 py-2 rounded-lg ${
+                      selectedDays === "30"
+                        ? "bg-blue-100 text-blue-700 font-medium"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    30 Days
+                  </button>
+                  <button
+                    onClick={() => setSelectedDays("60")}
+                    className={`px-4 py-2 rounded-lg ${
+                      selectedDays === "60"
+                        ? "bg-blue-100 text-blue-700 font-medium"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    60 Days
+                  </button>
+                  <button
+                    onClick={() => setSelectedDays("100")}
+                    className={`px-4 py-2 rounded-lg ${
+                      selectedDays === "100"
+                        ? "bg-blue-100 text-blue-700 font-medium"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    100 Days
+                  </button>
+                </div>
               </div>
             </div>
           </div>
