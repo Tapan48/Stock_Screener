@@ -99,19 +99,57 @@ def load_sell_stocks_from_holdings():
                 print(f"Unexpected holdings structure: {type(holdings)}")
                 holdings_list = []
             
+            print(f"Total holdings found: {len(holdings_list)}")
+            
+            # Get all instruments from both NSE and BSE
+            try:
+                nse_instruments = kite.instruments("NSE")
+                bse_instruments = kite.instruments("BSE")
+                all_instruments = nse_instruments + bse_instruments
+                print(f"Loaded {len(all_instruments)} instruments from Kite API")
+            except Exception as api_error:
+                print(f"Error loading instruments from Kite API: {api_error}")
+                all_instruments = []
+            
             for holding in holdings_list:
                 if isinstance(holding, dict):
                     symbol = holding.get('tradingsymbol')
+                    name = holding.get('name', symbol)
+                    exchange = holding.get('exchange', 'NSE')  # Default to NSE
+                    
                     if symbol:
-                        # Find the stock in instrument tokens
+                        # First try to find the stock in instrument tokens CSV
                         stock_info = df[df["tradingsymbol"] == symbol]
+                        
                         if not stock_info.empty:
+                            # Stock found in CSV
                             stock_data = stock_info.iloc[0]
                             holdings_stocks.append({
                                 "tradingsymbol": symbol,
                                 "instrument_token": stock_data["instrument_token"],
                                 "name": stock_data["name"]
                             })
+                            print(f"✅ Found {symbol} in instrument tokens CSV")
+                        else:
+                            # Stock not in CSV, find it in Kite instruments
+                            found_instrument = None
+                            
+                            # Search in all instruments
+                            for instrument in all_instruments:
+                                if (instrument.get('tradingsymbol') == symbol and 
+                                    instrument.get('exchange') == exchange):
+                                    found_instrument = instrument
+                                    break
+                            
+                            if found_instrument:
+                                holdings_stocks.append({
+                                    "tradingsymbol": symbol,
+                                    "instrument_token": found_instrument.get('instrument_token'),
+                                    "name": name
+                                })
+                                print(f"✅ Found {symbol} via Kite API ({exchange})")
+                            else:
+                                print(f"❌ Could not find instrument for {symbol} ({exchange})")
             
             sell_stocks_list = holdings_stocks
             print(f"Loaded {len(sell_stocks_list)} stocks from holdings for SELL signals")
@@ -136,23 +174,30 @@ def fetch_historical_data_for_stocks(stocks_list, signal_type):
     """Fetch historical data for given stocks"""
     print(f"Fetching historical data for {signal_type} stocks...")
     
-    for stock in stocks_list:
+    for i, stock in enumerate(stocks_list):
         token = stock["instrument_token"]
         symbol = stock["tradingsymbol"]
-        print(f"Fetching data for {symbol}...")
+        print(f"Fetching data for {symbol} (token: {token})...")
+        
+        # Add small delay between API calls to avoid rate limiting
+        if i > 0 and kite:
+            import time
+            time.sleep(0.5)  # 500ms delay between calls
         
         try:
             if kite:
                 # Test if we can access the API
                 try:
+                    print(f"  Making API call for {symbol}...")
                     data = kite.historical_data(
                         instrument_token=token,
                         from_date=(datetime.now() - timedelta(days=100)).strftime("%Y-%m-%d"),
                         to_date=datetime.now().strftime("%Y-%m-%d"),
                         interval="day"
                     )
+                    print(f"  API call successful for {symbol}, got {len(data)} records")
                 except Exception as api_error:
-                    print(f"API error for {symbol}: {api_error}")
+                    print(f"  API error for {symbol}: {api_error}")
                     # Use mock data if API fails
                     data = generate_mock_historical_data(symbol)
             else:
@@ -161,20 +206,46 @@ def fetch_historical_data_for_stocks(stocks_list, signal_type):
             
             df_hist = pd.DataFrame(data)
             if df_hist.empty:
-                print(f"No data for {symbol}, using mock data")
+                print(f"  No data for {symbol}, using mock data")
                 data = generate_mock_historical_data(symbol)
                 df_hist = pd.DataFrame(data)
             
-            df_hist["rsi"] = calculate_rsi(df_hist["close"])
-            df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
-            df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
-            
-            historical_data[token] = df_hist
-            indicators[token] = df_hist.iloc[-1].copy()
-            print(f"✅ Successfully loaded data for {symbol}")
+            print(f"  Calculating indicators for {symbol}...")
+            try:
+                df_hist["rsi"] = calculate_rsi(df_hist["close"])
+                df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
+                df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
+                
+                # Check if indicators are valid
+                latest = df_hist.iloc[-1]
+                if (pd.isna(latest["rsi"]) or pd.isna(latest["ma_44"]) or 
+                    pd.isna(latest["bb_upper"]) or pd.isna(latest["bb_lower"])):
+                    print(f"  ⚠️  Invalid indicators for {symbol}, using mock data")
+                    data = generate_mock_historical_data(symbol)
+                    df_hist = pd.DataFrame(data)
+                    df_hist["rsi"] = calculate_rsi(df_hist["close"])
+                    df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
+                    df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
+                
+                historical_data[token] = df_hist
+                indicators[token] = df_hist.iloc[-1].copy()
+                print(f"✅ Successfully loaded data for {symbol}")
+                
+            except Exception as calc_error:
+                print(f"  Error calculating indicators for {symbol}: {calc_error}")
+                # Generate mock data as fallback
+                data = generate_mock_historical_data(symbol)
+                df_hist = pd.DataFrame(data)
+                df_hist["rsi"] = calculate_rsi(df_hist["close"])
+                df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
+                df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
+                
+                historical_data[token] = df_hist
+                indicators[token] = df_hist.iloc[-1].copy()
+                print(f"✅ Generated mock data for {symbol}")
             
         except Exception as e:
-            print(f"Error fetching data for {symbol}: {e}")
+            print(f"❌ Error fetching data for {symbol}: {e}")
             # Generate mock data as fallback
             try:
                 data = generate_mock_historical_data(symbol)
@@ -185,9 +256,9 @@ def fetch_historical_data_for_stocks(stocks_list, signal_type):
                 
                 historical_data[token] = df_hist
                 indicators[token] = df_hist.iloc[-1].copy()
-                print(f"✅ Generated mock data for {symbol}")
+                print(f"✅ Generated mock data for {symbol} (fallback)")
             except Exception as mock_error:
-                print(f"Failed to generate mock data for {symbol}: {mock_error}")
+                print(f"❌ Failed to generate mock data for {symbol}: {mock_error}")
 
 def generate_mock_historical_data(symbol):
     """Generate mock historical data for testing"""
@@ -370,12 +441,25 @@ app.add_middleware(
 # --- INITIALIZATION ---
 def initialize_stock_data():
     """Initialize stock data on startup"""
-    global historical_data, indicators
+    global historical_data, indicators, buy_stocks_list
     
     print("Initializing stock data...")
     
-    # Load sell stocks from holdings
+    # Load sell stocks from holdings first
     load_sell_stocks_from_holdings()
+    
+    # Filter buy stocks to exclude any that are already in holdings
+    holdings_symbols = [stock["tradingsymbol"] for stock in sell_stocks_list]
+    original_buy_stocks = buy_stocks_list.copy()
+    
+    buy_stocks_list = [stock for stock in original_buy_stocks if stock["tradingsymbol"] not in holdings_symbols]
+    
+    filtered_out = [stock["tradingsymbol"] for stock in original_buy_stocks if stock["tradingsymbol"] in holdings_symbols]
+    if filtered_out:
+        print(f"⏭️  Filtered out from buy stocks (already in holdings): {filtered_out}")
+    
+    print(f"Buy stocks after filtering: {len(buy_stocks_list)} stocks")
+    print(f"Sell stocks from holdings: {len(sell_stocks_list)} stocks")
     
     # Fetch historical data for buy stocks
     fetch_historical_data_for_stocks(buy_stocks_list, "BUY")
@@ -493,12 +577,20 @@ async def get_holdings_stocks():
     """Get holdings stocks with their details"""
     holdings_signals = []
     
+    print(f"Total sell_stocks_list: {len(sell_stocks_list)}")
+    print(f"Available indicators: {len(indicators)}")
+    print(f"sell_stocks_list symbols: {[s['tradingsymbol'] for s in sell_stocks_list]}")
+    print(f"Available indicator tokens: {list(indicators.keys())}")
+    
     for stock in sell_stocks_list:
         token = stock["instrument_token"]
         symbol = stock["tradingsymbol"]
         name = stock["name"]
         
+        print(f"Processing {symbol} (token: {token})")
+        
         if token in indicators:
+            print(f"✅ {symbol} has indicators")
             indicator_data = indicators[token]
             
             # Get directions
@@ -533,7 +625,11 @@ async def get_holdings_stocks():
             )
             
             holdings_signals.append(stock_signal)
+            print(f"✅ Added {symbol} to holdings signals")
+        else:
+            print(f"❌ {symbol} missing indicators (token: {token})")
     
+    print(f"Returning {len(holdings_signals)} holdings signals")
     return {"holdings": holdings_signals}
 
 @app.get("/api/stocks/{symbol}")
