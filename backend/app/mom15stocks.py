@@ -72,6 +72,7 @@ historical_data = {}
 indicators = {}
 
 kite = KiteConnect(api_key=api_key_tapan)
+kite.set_access_token(access_token_tapan)
 
 
 #what is this for?
