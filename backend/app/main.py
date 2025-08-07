@@ -8,103 +8,45 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
-from kiteconnect import KiteConnect
+from kiteconnect import KiteConnect, KiteTicker
 from typing import List, Dict, Optional
 import asyncio
 from pydantic import BaseModel
 import json
 import time
+import sys
+from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(
-    title="Stock Screener API",
-    description="API for stock screening with technical indicators and real-time signals",
-    version="1.0.0"
-)
+# --- CONFIGURATION ---
+api_key_tapan = os.getenv("API_KEY_TAPAN")
+api_secret_tapan = os.getenv("API_SECRET_TAPAN")
+access_token_tapan = os.getenv("ACCESS_TOKEN_TAPAN")
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # React dev servers
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- STOCK SELECTION ---
+# Well-known NSE stocks for BUY signals
+buy_stocks_symbols = [
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "HINDUNILVR",
+    "ITC",
+    "SBIN",
+    "BHARTIARTL",
+    "AXISBANK"
+]
 
-# WebSocket connection manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+# Load instrument tokens
+df = pd.read_csv("instrument_tokens.csv")
+buy_stocks = df[df["tradingsymbol"].isin(buy_stocks_symbols)]
+buy_stocks_list = buy_stocks[["tradingsymbol", "instrument_token", "name"]].to_dict("records")
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
-
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                # Remove disconnected connections
-                self.active_connections.remove(connection)
-
-manager = ConnectionManager()
-
-# Pydantic models for API responses
-class StockIndicator(BaseModel):
-    rsi: float
-    rsi_direction: str
-    ma_44: float
-    ma_44_direction: str
-    bb_upper: float
-    bb_upper_direction: str
-    bb_lower: float
-    bb_lower_direction: str
-
-class StockSignal(BaseModel):
-    symbol: str
-    signal: str  # BUY, SELL, HOLD
-    close: float
-    indicators: StockIndicator
-    last_updated: str
-
-class StockSignalsResponse(BaseModel):
-    buy_signals: List[StockSignal]
-    sell_signals: List[StockSignal]
-    hold_signals: List[StockSignal]
-    total_stocks: int
-
-class SystemStatus(BaseModel):
-    status: str
-    zerodha_connected: bool
-    websocket_active: bool
-    stocks_monitored: int
-    last_update: str
-
-class LiveStockUpdate(BaseModel):
-    symbol: str
-    price: float
-    change: float
-    change_percent: float
-    volume: int
-    timestamp: str
-    signal: str
-    indicators: StockIndicator
-
-# Global variables for storing data
-historical_data = {}
-indicators = {}
-mom_stocks_list = []
-kite = None
-live_data_task = None
+# Sell stocks will be loaded from kite.holdings() dynamically
+sell_stocks_list = []
 
 # --- INDICATOR FUNCTIONS ---
 def calculate_rsi(prices, period=14):
@@ -128,8 +70,153 @@ def calculate_bollinger_bands(prices, period=20, std_dev=2):
     lower_band = sma - (std * std_dev)
     return upper_band, sma, lower_band
 
+# --- HISTORICAL DATA & INDICATOR STORAGE ---
+historical_data = {}
+indicators = {}
+
+# Initialize Kite connection
+kite = None
+if api_key_tapan and access_token_tapan:
+    kite = KiteConnect(api_key=api_key_tapan)
+    kite.set_access_token(access_token_tapan)
+
+def load_sell_stocks_from_holdings():
+    """Load sell stocks from kite.holdings()"""
+    global sell_stocks_list
+    try:
+        if kite:
+            holdings = kite.holdings()
+            holdings_stocks = []
+            
+            # Handle different possible structures of holdings data
+            if isinstance(holdings, dict):
+                # If holdings is a dictionary with 'net' key
+                holdings_list = holdings.get('net', [])
+            elif isinstance(holdings, list):
+                # If holdings is directly a list
+                holdings_list = holdings
+            else:
+                print(f"Unexpected holdings structure: {type(holdings)}")
+                holdings_list = []
+            
+            for holding in holdings_list:
+                if isinstance(holding, dict):
+                    symbol = holding.get('tradingsymbol')
+                    if symbol:
+                        # Find the stock in instrument tokens
+                        stock_info = df[df["tradingsymbol"] == symbol]
+                        if not stock_info.empty:
+                            stock_data = stock_info.iloc[0]
+                            holdings_stocks.append({
+                                "tradingsymbol": symbol,
+                                "instrument_token": stock_data["instrument_token"],
+                                "name": stock_data["name"]
+                            })
+            
+            sell_stocks_list = holdings_stocks
+            print(f"Loaded {len(sell_stocks_list)} stocks from holdings for SELL signals")
+        else:
+            print("Kite connection not available, using mock data for sell stocks")
+            # Mock data for testing
+            sell_stocks_list = [
+                {"tradingsymbol": "SBIN", "instrument_token": 3045, "name": "SBIN"},
+                {"tradingsymbol": "RELIANCE", "instrument_token": 2885, "name": "RELIANCE"},
+                {"tradingsymbol": "HDFCBANK", "instrument_token": 341, "name": "HDFCBANK"}
+            ]
+    except Exception as e:
+        print(f"Error loading holdings: {e}")
+        # Fallback to mock data
+        sell_stocks_list = [
+            {"tradingsymbol": "SBIN", "instrument_token": 3045, "name": "SBIN"},
+            {"tradingsymbol": "RELIANCE", "instrument_token": 2885, "name": "RELIANCE"},
+            {"tradingsymbol": "HDFCBANK", "instrument_token": 341, "name": "HDFCBANK"}
+        ]
+
+def fetch_historical_data_for_stocks(stocks_list, signal_type):
+    """Fetch historical data for given stocks"""
+    print(f"Fetching historical data for {signal_type} stocks...")
+    
+    for stock in stocks_list:
+        token = stock["instrument_token"]
+        symbol = stock["tradingsymbol"]
+        print(f"Fetching data for {symbol}...")
+        
+        try:
+            if kite:
+                # Test if we can access the API
+                try:
+                    data = kite.historical_data(
+                        instrument_token=token,
+                        from_date=(datetime.now() - timedelta(days=100)).strftime("%Y-%m-%d"),
+                        to_date=datetime.now().strftime("%Y-%m-%d"),
+                        interval="day"
+                    )
+                except Exception as api_error:
+                    print(f"API error for {symbol}: {api_error}")
+                    # Use mock data if API fails
+                    data = generate_mock_historical_data(symbol)
+            else:
+                # Mock data for testing
+                data = generate_mock_historical_data(symbol)
+            
+            df_hist = pd.DataFrame(data)
+            if df_hist.empty:
+                print(f"No data for {symbol}, using mock data")
+                data = generate_mock_historical_data(symbol)
+                df_hist = pd.DataFrame(data)
+            
+            df_hist["rsi"] = calculate_rsi(df_hist["close"])
+            df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
+            df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
+            
+            historical_data[token] = df_hist
+            indicators[token] = df_hist.iloc[-1].copy()
+            print(f"✅ Successfully loaded data for {symbol}")
+            
+        except Exception as e:
+            print(f"Error fetching data for {symbol}: {e}")
+            # Generate mock data as fallback
+            try:
+                data = generate_mock_historical_data(symbol)
+                df_hist = pd.DataFrame(data)
+                df_hist["rsi"] = calculate_rsi(df_hist["close"])
+                df_hist["ma_44"] = calculate_sma(df_hist["close"], 44)
+                df_hist["bb_upper"], df_hist["bb_middle"], df_hist["bb_lower"] = calculate_bollinger_bands(df_hist["close"])
+                
+                historical_data[token] = df_hist
+                indicators[token] = df_hist.iloc[-1].copy()
+                print(f"✅ Generated mock data for {symbol}")
+            except Exception as mock_error:
+                print(f"Failed to generate mock data for {symbol}: {mock_error}")
+
+def generate_mock_historical_data(symbol):
+    """Generate mock historical data for testing"""
+    dates = pd.date_range(start=datetime.now() - timedelta(days=100), end=datetime.now(), freq='D')
+    base_price = 1000 if symbol in ["RELIANCE", "TCS"] else 500
+    
+    data = []
+    for i, date in enumerate(dates):
+        # Simulate realistic price movements
+        price_change = np.random.normal(0, 0.02)  # 2% daily volatility
+        base_price *= (1 + price_change)
+        
+        high = base_price * (1 + abs(np.random.normal(0, 0.01)))
+        low = base_price * (1 - abs(np.random.normal(0, 0.01)))
+        open_price = base_price * (1 + np.random.normal(0, 0.005))
+        
+        data.append({
+            "date": date.strftime("%Y-%m-%d"),
+            "open": round(open_price, 2),
+            "high": round(high, 2),
+            "low": round(low, 2),
+            "close": round(base_price, 2),
+            "volume": int(np.random.uniform(1000000, 5000000))
+        })
+    
+    return data
+
+# --- INDICATOR DIRECTION DETECTION ---
 def detect_trend_direction(values, lookback=5, threshold=0.001):
-    """Detect if indicator values are ascending, descending, or constant"""
     if len(values) < lookback:
         return "INSUFFICIENT_DATA"
     
@@ -148,7 +235,6 @@ def detect_trend_direction(values, lookback=5, threshold=0.001):
         return "DESCENDING"
 
 def get_indicator_directions(df, lookback=5):
-    """Get direction trends for all indicators"""
     directions = {}
     indicators = ['rsi', 'ma_44', 'bb_upper', 'bb_middle', 'bb_lower']
     
@@ -160,8 +246,8 @@ def get_indicator_directions(df, lookback=5):
     
     return directions
 
+# --- ENHANCED TRADING LOGIC WITH DIRECTION ---
 def apply_trading_logic_with_direction(latest, df):
-    """Enhanced trading logic that includes indicator direction trends"""
     rsi = latest["rsi"]
     close = latest["close"]
     ma_44 = latest["ma_44"]
@@ -204,426 +290,337 @@ def apply_trading_logic_with_direction(latest, df):
     else:
         return "HOLD"
 
+# --- PYDANTIC MODELS ---
+class StockIndicator(BaseModel):
+    rsi: float
+    rsi_direction: str
+    ma_44: float
+    ma_44_direction: str
+    bb_upper: float
+    bb_upper_direction: str
+    bb_lower: float
+    bb_lower_direction: str
+
+class StockSignal(BaseModel):
+    symbol: str
+    name: str
+    close: float
+    change: Optional[float] = None
+    change_percent: Optional[float] = None
+    volume: Optional[int] = None
+    signal: str
+    indicators: StockIndicator
+    timestamp: Optional[str] = None
+
+class StockSignalsResponse(BaseModel):
+    buy_signals: List[StockSignal]
+    sell_signals: List[StockSignal]
+    hold_signals: List[StockSignal]
+
+class SystemStatus(BaseModel):
+    zerodha_connected: bool
+    websocket_active: bool
+    stocks_monitored: int
+
+class LiveStockUpdate(BaseModel):
+    symbol: str
+    price: float
+    change: float
+    change_percent: float
+    volume: int
+    signal: str
+    timestamp: str
+
+# --- WEBSOCKET CONNECTION MANAGER ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except:
+                # Remove disconnected websockets
+                if connection in self.active_connections:
+                    self.active_connections.remove(connection)
+
+manager = ConnectionManager()
+
+# --- FASTAPI APP ---
+app = FastAPI(title="Stock Screener API", version="1.0.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- INITIALIZATION ---
 def initialize_stock_data():
-    """Initialize stock data and indicators"""
-    global historical_data, indicators, mom_stocks_list, kite
+    """Initialize stock data on startup"""
+    global historical_data, indicators
     
-    # Initialize Zerodha connection
-    api_key = os.getenv("API_KEY_TAPAN")
-    api_secret = os.getenv("API_SECRET_TAPAN")
-    access_token = os.getenv("ACCESS_TOKEN_TAPAN")
+    print("Initializing stock data...")
     
-    if not all([api_key, api_secret, access_token]):
-        print("Warning: Zerodha credentials not found. Using mock data.")
-        return False
+    # Load sell stocks from holdings
+    load_sell_stocks_from_holdings()
     
-    try:
-        kite = KiteConnect(api_key=api_key)
-        kite.set_access_token(access_token)
-        
-        # Load mom's stocks
-        mom_symbols = ["SBIN", "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC"]
-        
-        # For now, use mock data structure
-        for symbol in mom_symbols:
-            # Create mock data structure
-            mock_data = pd.DataFrame({
-                'date': pd.date_range(start='2024-01-01', periods=100, freq='D'),
-                'close': np.random.normal(1000, 100, 100),
-                'open': np.random.normal(1000, 100, 100),
-                'high': np.random.normal(1020, 100, 100),
-                'low': np.random.normal(980, 100, 100),
-                'volume': np.random.randint(1000000, 5000000, 100)
-            })
-            
-            # Calculate indicators
-            mock_data["rsi"] = calculate_rsi(mock_data["close"])
-            mock_data["ma_44"] = calculate_sma(mock_data["close"], 44)
-            mock_data["bb_upper"], mock_data["bb_middle"], mock_data["bb_lower"] = calculate_bollinger_bands(mock_data["close"])
-            
-            historical_data[symbol] = mock_data
-            indicators[symbol] = mock_data.iloc[-1].copy()
-            mom_stocks_list.append({"tradingsymbol": symbol, "name": symbol})
-        
-        return True
-    except Exception as e:
-        print(f"Error initializing Zerodha connection: {e}")
-        return False
-
-# Initialize data on startup
-@app.on_event("startup")
-async def startup_event():
-    """Initialize stock data and start live data broadcasting"""
-    initialize_stock_data()
+    # Fetch historical data for buy stocks
+    fetch_historical_data_for_stocks(buy_stocks_list, "BUY")
     
-    # Start live data broadcasting
-    global live_data_task
-    if live_data_task is None:
-        live_data_task = asyncio.create_task(broadcast_live_updates())
+    # Fetch historical data for sell stocks
+    fetch_historical_data_for_stocks(sell_stocks_list, "SELL")
+    
+    print(f"Initialized data for {len(historical_data)} stocks")
 
-@app.get("/")
-async def root():
-    return {"message": "Stock Screener API is running!", "version": "1.0.0"}
-
-@app.get("/health", response_model=SystemStatus)
-async def health_check():
-    """Get system health status"""
-    return SystemStatus(
-        status="healthy",
-        zerodha_connected=kite is not None,
-        websocket_active=len(manager.active_connections) > 0,
-        stocks_monitored=len(mom_stocks_list),
-        last_update=datetime.now().isoformat()
-    )
-
-@app.get("/api/stocks/signals", response_model=StockSignalsResponse)
-async def get_stock_signals():
-    """Get all stock signals (BUY/SELL/HOLD)"""
+def get_stock_signals():
+    """Get current stock signals"""
     buy_signals = []
     sell_signals = []
     hold_signals = []
     
-    for stock in mom_stocks_list:
-        symbol = stock["tradingsymbol"]
-        if symbol not in indicators:
-            continue
+    # Process buy stocks
+    for stock in buy_stocks_list:
+        token = stock["instrument_token"]
+        if token in indicators:
+            latest = indicators[token]
+            df = historical_data[token]
+            signal = apply_trading_logic_with_direction(latest, df)
+            directions = get_indicator_directions(df)
             
-        latest = indicators[symbol]
-        df = historical_data[symbol]
-        signal = apply_trading_logic_with_direction(latest, df)
-        directions = get_indicator_directions(df)
-        
-        stock_signal = StockSignal(
-            symbol=symbol,
-            signal=signal,
-            close=float(latest["close"]),
-            indicators=StockIndicator(
-                rsi=float(latest["rsi"]),
-                rsi_direction=directions.get("rsi_direction", "CONSTANT"),
-                ma_44=float(latest["ma_44"]),
-                ma_44_direction=directions.get("ma_44_direction", "CONSTANT"),
-                bb_upper=float(latest["bb_upper"]),
-                bb_upper_direction=directions.get("bb_upper_direction", "CONSTANT"),
-                bb_lower=float(latest["bb_lower"]),
-                bb_lower_direction=directions.get("bb_lower_direction", "CONSTANT")
-            ),
-            last_updated=datetime.now().isoformat()
-        )
-        
-        if signal == "BUY":
-            buy_signals.append(stock_signal)
-        elif signal == "SELL":
-            sell_signals.append(stock_signal)
-        else:
-            hold_signals.append(stock_signal)
+            stock_signal = StockSignal(
+                symbol=stock["tradingsymbol"],
+                name=stock["name"],
+                close=latest["close"],
+                change=latest.get("change", 0),
+                change_percent=latest.get("change_percent", 0),
+                volume=latest.get("volume", 0),
+                signal=signal,
+                indicators=StockIndicator(
+                    rsi=latest["rsi"],
+                    rsi_direction=directions.get("rsi_direction", "CONSTANT"),
+                    ma_44=latest["ma_44"],
+                    ma_44_direction=directions.get("ma_44_direction", "CONSTANT"),
+                    bb_upper=latest["bb_upper"],
+                    bb_upper_direction=directions.get("bb_upper_direction", "CONSTANT"),
+                    bb_lower=latest["bb_lower"],
+                    bb_lower_direction=directions.get("bb_lower_direction", "CONSTANT")
+                ),
+                timestamp=datetime.now().isoformat()
+            )
+            
+            if signal == "BUY":
+                buy_signals.append(stock_signal)
+            elif signal == "SELL":
+                sell_signals.append(stock_signal)
+            else:
+                hold_signals.append(stock_signal)
+    
+    # Process sell stocks (from holdings)
+    for stock in sell_stocks_list:
+        token = stock["instrument_token"]
+        if token in indicators:
+            latest = indicators[token]
+            df = historical_data[token]
+            signal = apply_trading_logic_with_direction(latest, df)
+            directions = get_indicator_directions(df)
+            
+            stock_signal = StockSignal(
+                symbol=stock["tradingsymbol"],
+                name=stock["name"],
+                close=latest["close"],
+                change=latest.get("change", 0),
+                change_percent=latest.get("change_percent", 0),
+                volume=latest.get("volume", 0),
+                signal=signal,
+                indicators=StockIndicator(
+                    rsi=latest["rsi"],
+                    rsi_direction=directions.get("rsi_direction", "CONSTANT"),
+                    ma_44=latest["ma_44"],
+                    ma_44_direction=directions.get("ma_44_direction", "CONSTANT"),
+                    bb_upper=latest["bb_upper"],
+                    bb_upper_direction=directions.get("bb_upper_direction", "CONSTANT"),
+                    bb_lower=latest["bb_lower"],
+                    bb_lower_direction=directions.get("bb_lower_direction", "CONSTANT")
+                ),
+                timestamp=datetime.now().isoformat()
+            )
+            
+            if signal == "SELL":
+                sell_signals.append(stock_signal)
+            elif signal == "BUY":
+                buy_signals.append(stock_signal)
+            else:
+                hold_signals.append(stock_signal)
     
     return StockSignalsResponse(
         buy_signals=buy_signals,
         sell_signals=sell_signals,
-        hold_signals=hold_signals,
-        total_stocks=len(mom_stocks_list)
+        hold_signals=hold_signals
     )
+
+# --- API ENDPOINTS ---
+@app.get("/")
+async def root():
+    return {"message": "Stock Screener API is running"}
+
+@app.get("/health")
+async def health_check():
+    return SystemStatus(
+        zerodha_connected=kite is not None,
+        websocket_active=len(manager.active_connections) > 0,
+        stocks_monitored=len(historical_data)
+    )
+
+@app.get("/api/stocks/signals")
+async def get_stock_signals_endpoint():
+    return get_stock_signals()
 
 @app.get("/api/stocks/{symbol}")
 async def get_stock_details(symbol: str):
-    """Get detailed data for a specific stock"""
-    if symbol not in indicators:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+    # Find stock by symbol
+    all_stocks = buy_stocks_list + sell_stocks_list
+    stock = next((s for s in all_stocks if s["tradingsymbol"] == symbol), None)
     
-    latest = indicators[symbol]
-    df = historical_data[symbol]
-    signal = apply_trading_logic_with_direction(latest, df)
-    directions = get_indicator_directions(df)
+    if not stock:
+        return {"error": "Stock not found"}
     
+    token = stock["instrument_token"]
+    if token not in indicators:
+        return {"error": "Stock data not available"}
+    
+    latest = indicators[token]
     return {
         "symbol": symbol,
-        "signal": signal,
-        "close": float(latest["close"]),
+        "name": stock["name"],
+        "close": latest["close"],
         "indicators": {
-            "rsi": float(latest["rsi"]),
-            "rsi_direction": directions.get("rsi_direction", "CONSTANT"),
-            "ma_44": float(latest["ma_44"]),
-            "ma_44_direction": directions.get("ma_44_direction", "CONSTANT"),
-            "bb_upper": float(latest["bb_upper"]),
-            "bb_upper_direction": directions.get("bb_upper_direction", "CONSTANT"),
-            "bb_lower": float(latest["bb_lower"]),
-            "bb_lower_direction": directions.get("bb_lower_direction", "CONSTANT")
-        },
-        "last_updated": datetime.now().isoformat()
+            "rsi": latest["rsi"],
+            "ma_44": latest["ma_44"],
+            "bb_upper": latest["bb_upper"],
+            "bb_lower": latest["bb_lower"]
+        }
     }
 
 @app.get("/api/stocks/{symbol}/history")
-async def get_stock_history(symbol: str, days: int = 30):
-    """Get historical data for a specific stock"""
-    if symbol not in historical_data:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+async def get_stock_history(symbol: str):
+    # Find stock by symbol
+    all_stocks = buy_stocks_list + sell_stocks_list
+    stock = next((s for s in all_stocks if s["tradingsymbol"] == symbol), None)
     
-    df = historical_data[symbol].tail(days)
+    if not stock:
+        return {"error": "Stock not found"}
     
+    token = stock["instrument_token"]
+    if token not in historical_data:
+        return {"error": "Historical data not available"}
+    
+    df = historical_data[token]
     return {
         "symbol": symbol,
-        "data": [
-            {
-                "date": row["date"].strftime("%Y-%m-%d"),
-                "close": float(row["close"]),
-                "rsi": float(row["rsi"]),
-                "ma_44": float(row["ma_44"]),
-                "bb_upper": float(row["bb_upper"]),
-                "bb_lower": float(row["bb_lower"])
-            }
-            for _, row in df.iterrows()
-        ]
+        "history": df.to_dict("records")
     }
 
 @app.get("/api/stocks/popular")
 async def get_popular_stocks():
-    """Get data for popular Indian stocks using yfinance"""
-    popular_stocks = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS']
-    results = []
-    
-    for symbol in popular_stocks:
-        try:
-            stock = yf.Ticker(symbol)
-            data = stock.history(period="3mo")
-            
-            if data.empty:
-                continue
-            
-            # Calculate basic indicators
-            data['SMA_20'] = data['Close'].rolling(window=20).mean()
-            data['SMA_50'] = data['Close'].rolling(window=50).mean()
-            
-            latest = data.iloc[-1]
-            
-            results.append({
-                "symbol": symbol.replace('.NS', ''),
-                "current_price": round(float(latest['Close']), 2),
-                "volume": int(latest['Volume']),
-                "sma_20": round(float(latest['SMA_20']), 2) if not pd.isna(latest['SMA_20']) else None,
-                "sma_50": round(float(latest['SMA_50']), 2) if not pd.isna(latest['SMA_50']) else None,
-                "last_updated": latest.name.strftime("%Y-%m-%d %H:%M:%S")
-            })
-        except Exception as e:
-            print(f"Error fetching {symbol}: {e}")
-            continue
-    
-    return {"stocks": results, "count": len(results)}
+    # Return the buy stocks list as popular stocks
+    return {
+        "stocks": [
+            {
+                "symbol": stock["tradingsymbol"],
+                "name": stock["name"],
+                "instrument_token": stock["instrument_token"]
+            }
+            for stock in buy_stocks_list
+        ]
+    }
 
-# --- WEBSOCKET ENDPOINTS FOR LIVE DATA ---
-
+# --- WEBSOCKET ENDPOINTS ---
 @app.websocket("/ws/live")
 async def websocket_live_data(websocket: WebSocket):
-    """WebSocket endpoint for live stock data updates"""
     await manager.connect(websocket)
     try:
-        # Send initial connection confirmation
-        await manager.send_personal_message(
-            json.dumps({
-                "type": "connection",
-                "message": "Connected to live stock data feed",
-                "timestamp": datetime.now().isoformat()
-            }), 
-            websocket
-        )
-        
-        # Keep connection alive and handle incoming messages
         while True:
-            try:
-                # Wait for any message from client (ping/pong)
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                
-                if message.get("type") == "ping":
-                    await manager.send_personal_message(
-                        json.dumps({
-                            "type": "pong",
-                            "timestamp": datetime.now().isoformat()
-                        }), 
-                        websocket
-                    )
-                    
-            except WebSocketDisconnect:
-                manager.disconnect(websocket)
-                break
-            except Exception as e:
-                print(f"WebSocket error: {e}")
-                break
-                
+            data = await websocket.receive_text()
+            # Handle any incoming messages if needed
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
 @app.websocket("/ws/signals")
 async def websocket_signals(websocket: WebSocket):
-    """WebSocket endpoint for real-time trading signals"""
     await manager.connect(websocket)
     try:
-        # Send initial connection confirmation
-        await manager.send_personal_message(
-            json.dumps({
-                "type": "connection",
-                "message": "Connected to trading signals feed",
-                "timestamp": datetime.now().isoformat()
-            }), 
-            websocket
-        )
-        
         while True:
-            try:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                
-                if message.get("type") == "ping":
-                    await manager.send_personal_message(
-                        json.dumps({
-                            "type": "pong",
-                            "timestamp": datetime.now().isoformat()
-                        }), 
-                        websocket
-                    )
-                    
-            except WebSocketDisconnect:
-                manager.disconnect(websocket)
-                break
-            except Exception as e:
-                print(f"WebSocket error: {e}")
-                break
-                
+            data = await websocket.receive_text()
+            # Handle any incoming messages if needed
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# --- LIVE DATA FUNCTIONS ---
-
-async def fetch_live_stock_data(symbol: str):
-    """Fetch live stock data using yfinance"""
-    try:
-        # Handle both string and dictionary inputs
-        if isinstance(symbol, dict):
-            symbol_str = symbol.get('tradingsymbol', symbol.get('name', str(symbol)))
-        else:
-            symbol_str = str(symbol)
-        
-        # Add .NS suffix for Indian stocks if not present
-        if not symbol_str.endswith('.NS'):
-            symbol_str = f"{symbol_str}.NS"
-        
-        stock = yf.Ticker(symbol_str)
-        # Get real-time data
-        info = stock.info
-        hist = stock.history(period="5d")
-        
-        if hist.empty:
-            return None
-            
-        latest = hist.iloc[-1]
-        prev = hist.iloc[-2] if len(hist) > 1 else latest
-        
-        # Calculate basic indicators
-        hist['SMA_20'] = hist['Close'].rolling(window=20).mean()
-        hist['RSI'] = calculate_rsi(hist['Close'])
-        
-        current_price = float(latest['Close'])
-        prev_price = float(prev['Close'])
-        change = current_price - prev_price
-        change_percent = (change / prev_price) * 100 if prev_price > 0 else 0
-        
-        # Simple signal logic
-        sma_20 = hist['SMA_20'].iloc[-1] if not pd.isna(hist['SMA_20'].iloc[-1]) else current_price
-        rsi = hist['RSI'].iloc[-1] if not pd.isna(hist['RSI'].iloc[-1]) else 50
-        
-        if current_price > sma_20 and rsi < 70:
-            signal = "BUY"
-        elif current_price < sma_20 and rsi > 30:
-            signal = "SELL"
-        else:
-            signal = "HOLD"
-        
-        # Extract clean symbol name for display
-        display_symbol = symbol_str.replace('.NS', '')
-        
-        return {
-            "symbol": display_symbol,
-            "price": round(current_price, 2),
-            "change": round(change, 2),
-            "change_percent": round(change_percent, 2),
-            "volume": int(latest['Volume']),
-            "timestamp": datetime.now().isoformat(),
-            "signal": signal,
-            "indicators": {
-                "rsi": round(rsi, 2),
-                "rsi_direction": "ASCENDING" if rsi > 50 else "DESCENDING",
-                "ma_44": round(sma_20, 2),
-                "ma_44_direction": "ASCENDING" if current_price > sma_20 else "DESCENDING",
-                "bb_upper": round(current_price * 1.02, 2),
-                "bb_upper_direction": "ASCENDING",
-                "bb_lower": round(current_price * 0.98, 2),
-                "bb_lower_direction": "DESCENDING"
-            }
-        }
-    except Exception as e:
-        print(f"Error fetching live data for {symbol}: {e}")
-        return None
-
+# --- BACKGROUND TASKS ---
 async def broadcast_live_updates():
-    """Background task to broadcast live stock updates"""
-    global live_data_task
-    
+    """Background task to broadcast live updates"""
     while True:
         try:
             if manager.active_connections:
-                # Fetch live data for monitored stocks
+                # Get current signals
+                signals = get_stock_signals()  # This is now a regular function
+                
+                # Create live updates from current data
                 live_updates = []
+                all_stocks = buy_stocks_list + sell_stocks_list
                 
-                for stock_item in mom_stocks_list[:10]:  # Limit to first 10 stocks for performance
-                    try:
-                        live_data = await fetch_live_stock_data(stock_item)
-                        if live_data:
-                            live_updates.append(live_data)
-                    except Exception as e:
-                        print(f"Error processing stock {stock_item}: {e}")
-                        continue
+                for stock in all_stocks[:10]:  # Limit to 10 stocks for live updates
+                    token = stock["instrument_token"]
+                    if token in indicators:
+                        latest = indicators[token]
+                        df = historical_data[token]
+                        signal = apply_trading_logic_with_direction(latest, df)
+                        
+                        live_update = LiveStockUpdate(
+                            symbol=stock["tradingsymbol"],
+                            price=latest["close"],
+                            change=latest.get("change", 0),
+                            change_percent=latest.get("change_percent", 0),
+                            volume=latest.get("volume", 0),
+                            signal=signal,
+                            timestamp=datetime.now().isoformat()
+                        )
+                        live_updates.append(live_update)
                 
-                if live_updates:
-                    # Broadcast to all connected clients
-                    try:
-                        await manager.broadcast(json.dumps({
-                            "type": "live_update",
-                            "data": live_updates,
-                            "timestamp": datetime.now().isoformat()
-                        }))
-                        print(f"Broadcasted {len(live_updates)} live updates to {len(manager.active_connections)} clients")
-                    except Exception as e:
-                        print(f"Error broadcasting live updates: {e}")
+                # Broadcast to all connected clients
+                await manager.broadcast(json.dumps({
+                    "type": "live_updates",
+                    "data": [update.model_dump() for update in live_updates]  # Use model_dump instead of dict
+                }))
                 
-                # Update system status
-                try:
-                    await manager.broadcast(json.dumps({
-                        "type": "system_status",
-                        "data": {
-                            "status": "active",
-                            "zerodha_connected": kite is not None,
-                            "websocket_active": len(manager.active_connections) > 0,
-                            "stocks_monitored": len(mom_stocks_list),
-                            "last_update": datetime.now().isoformat()
-                        }
-                    }))
-                except Exception as e:
-                    print(f"Error broadcasting system status: {e}")
+                print(f"Broadcasted {len(live_updates)} live updates to {len(manager.active_connections)} clients")
             else:
                 print("No active WebSocket connections")
-            
-            # Wait before next update
-            await asyncio.sleep(30)  # Update every 30 seconds
-            
+                
         except Exception as e:
-            print(f"Error in live update broadcast: {e}")
-            await asyncio.sleep(60)  # Wait longer on error
+            print(f"Error in broadcast_live_updates: {e}")
+        
+        await asyncio.sleep(30)  # Update every 30 seconds
 
-# Start live data broadcasting on startup
-# @app.on_event("startup")
-# async def start_live_data():
-#     global live_data_task
-#     if live_data_task is None:
-#         live_data_task = asyncio.create_task(broadcast_live_updates())
+# --- STARTUP EVENT ---
+@app.on_event("startup")
+async def startup_event():
+    initialize_stock_data()
+    asyncio.create_task(broadcast_live_updates())
 
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
