@@ -290,6 +290,17 @@ class StockScreenerAPI {
     }
   }
 
+  // Get holdings stocks
+  async getHoldingsStocks() {
+    try {
+      const response = await api.get("/api/stocks/holdings");
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching holdings stocks:", error);
+      throw error;
+    }
+  }
+
   // Get system status
   async getSystemStatus() {
     try {
