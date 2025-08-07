@@ -267,7 +267,7 @@ class StockScreenerAPI {
   }
 
   // Get historical data for a specific stock
-  async getStockHistory(symbol, days = 30) {
+  async getStockHistory(symbol, days = 100) {
     try {
       const response = await api.get(
         `/api/stocks/${symbol}/history?days=${days}`

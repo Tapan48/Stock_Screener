@@ -659,7 +659,7 @@ async def get_stock_details(symbol: str):
     }
 
 @app.get("/api/stocks/{symbol}/history")
-async def get_stock_history(symbol: str):
+async def get_stock_history(symbol: str, days: int = 100):
     # Find stock by symbol
     all_stocks = buy_stocks_list + sell_stocks_list
     stock = next((s for s in all_stocks if s["tradingsymbol"] == symbol), None)
@@ -672,6 +672,9 @@ async def get_stock_history(symbol: str):
         return {"error": "Historical data not available"}
     
     df = historical_data[token]
+    
+    # Get the last 'days' number of records
+    df = df.tail(days)
     
     # Convert DataFrame to a JSON-compatible format
     history_records = []
@@ -700,6 +703,7 @@ async def get_stock_history(symbol: str):
     
     return {
         "symbol": symbol,
+        "days": days,
         "history": history_records
     }
 
