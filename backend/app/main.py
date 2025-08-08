@@ -41,7 +41,7 @@ buy_stocks_symbols = [
 ]
 
 # Load instrument tokens
-df = pd.read_csv("instrument_tokens.csv")    ###  nse stocks only need to get bse tokens as well
+df = pd.read_csv(os.path.join(os.path.dirname(__file__), "instrument_tokens.csv"))    ###  nse stocks only need to get bse tokens as well
 buy_stocks = df[df["tradingsymbol"].isin(buy_stocks_symbols)]
 buy_stocks_list = buy_stocks[["tradingsymbol", "instrument_token", "name"]].to_dict("records")
 
@@ -196,6 +196,7 @@ def fetch_historical_data_for_stocks(stocks_list, signal_type):
                         interval="day"
                     )
                     print(f"  API call successful for {symbol}, got {len(data)} records")
+                    # print(f"  API call successful for {symbol}, got {data} records")
                 except Exception as api_error:
                     print(f"  API error for {symbol}: {api_error}")
                     # Use mock data if API fails
@@ -672,9 +673,11 @@ async def get_stock_history(symbol: str, days: int = 30):
         return {"error": "Historical data not available"}
     
     df = historical_data[token]
-    
+    # print( "this is the historical data for the stock hehe{symbol} :", df)
+    # print(f"Historical data for {symbol}: {df}")
     # Get the last 'days' number of records
     df = df.tail(days)
+    # print(f"Historical data for past {days} days {symbol}: {df}")
     
     # Convert DataFrame to a JSON-compatible format
     history_records = []
@@ -713,10 +716,84 @@ async def get_popular_stocks():
     return {"stocks": buy_stocks_list}
 
 # --- WEBSOCKET ENDPOINTS ---
+# KiteTicker instance
+kws = None
+if api_key_tapan and access_token_tapan:
+    kws = KiteTicker(api_key_tapan, access_token_tapan)
+
+def on_ticks(ws, ticks):
+    """Callback to receive ticks."""
+    for tick in ticks:
+        # Convert tick data to LiveStockUpdate format
+        try:
+            update = LiveStockUpdate(
+                symbol=tick.get("tradingsymbol", ""),
+                price=tick.get("last_price", 0),
+                change=tick.get("change", 0),
+                change_percent=tick.get("change_percent", 0),
+                volume=tick.get("volume", 0),
+                signal="LIVE",  # We'll update this based on analysis if needed
+                timestamp=datetime.now().isoformat()
+            )
+            # Broadcast to all connected clients
+            asyncio.create_task(manager.broadcast(json.dumps({
+                "type": "tick_update",
+                "data": update.model_dump()
+            })))
+        except Exception as e:
+            print(f"Error processing tick: {e}")
+
+def on_connect(ws, response):
+    """Callback on successful connect."""
+    print("KiteTicker connected!")
+    # Subscribe to all instrument tokens from buy_stocks_list and sell_stocks_list
+    tokens = [stock["instrument_token"] for stock in buy_stocks_list + sell_stocks_list]
+    ws.subscribe(tokens)
+    ws.set_mode(ws.MODE_FULL, tokens)
+
+def on_close(ws, code, reason):
+    """On connection close callback."""
+    print(f"KiteTicker connection closed: {reason}")
+
+def on_error(ws, code, reason):
+    """On connection error callback."""
+    print(f"KiteTicker error: {code} - {reason}")
+
+def on_reconnect(ws, attempts_count):
+    """On reconnection callback."""
+    print(f"KiteTicker reconnecting: {attempts_count} attempts")
+
+def start_kite_ticker():
+    """Start KiteTicker connection"""
+    if kws:
+        # Assign the callbacks
+        kws.on_ticks = on_ticks
+        kws.on_connect = on_connect
+        kws.on_close = on_close
+        kws.on_error = on_error
+        kws.on_reconnect = on_reconnect
+        
+        # Connect in a separate thread
+        import threading
+        ticker_thread = threading.Thread(target=kws.connect, kwargs={"threaded": True})
+        ticker_thread.daemon = True
+        ticker_thread.start()
+        print("KiteTicker thread started")
+    else:
+        print("KiteTicker not initialized - missing API credentials")
+
 @app.websocket("/ws/live")
 async def websocket_live_data(websocket: WebSocket):
     await manager.connect(websocket)
     try:
+        # Send initial stock data
+        signals = get_stock_signals()
+        await websocket.send_json({
+            "type": "initial_data",
+            "data": signals.model_dump()
+        })
+        
+        # Keep connection alive and handle incoming messages
         while True:
             data = await websocket.receive_text()
             # Handle any incoming messages if needed
@@ -783,6 +860,9 @@ async def broadcast_live_updates():
 @app.on_event("startup")
 async def startup_event():
     initialize_stock_data()
+    # Start KiteTicker in a separate thread
+    start_kite_ticker()
+    # Start periodic updates for non-tick data
     asyncio.create_task(broadcast_live_updates())
 
 # --- MAIN EXECUTION ---

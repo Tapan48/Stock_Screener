@@ -388,24 +388,39 @@ const Home = () => {
               onValueChange={(value) => value && setSelectedSignal(value)}
               className="bg-white shadow-sm border rounded-lg p-1"
             >
-              <ToggleGroupItem value="buy" className="px-6 py-2">
-                <TrendingUp className="w-4 h-4 mr-2" />
+              <ToggleGroupItem
+                value="buy"
+                className="px-6 py-2 data-[state=on]:text-blue-800"
+              >
+                <TrendingUp className="w-4 h-4 mr-2 group-data-[state=on]:text-blue-800" />
                 Buy Signals ({stockSignals.buy_signals?.length || 0})
               </ToggleGroupItem>
-              <ToggleGroupItem value="sell" className="px-6 py-2">
-                <TrendingDown className="w-4 h-4 mr-2" />
+              <ToggleGroupItem
+                value="sell"
+                className="px-6 py-2 data-[state=on]:text-blue-800"
+              >
+                <TrendingDown className="w-4 h-4 mr-2 group-data-[state=on]:text-blue-800" />
                 Sell Signals ({stockSignals.sell_signals?.length || 0})
               </ToggleGroupItem>
-              <ToggleGroupItem value="hold" className="px-6 py-2">
-                <Minus className="w-4 h-4 mr-2" />
+              <ToggleGroupItem
+                value="hold"
+                className="px-6 py-2 data-[state=on]:text-blue-800"
+              >
+                <Minus className="w-4 h-4 mr-2 group-data-[state=on]:text-blue-800" />
                 Hold Signals ({stockSignals.hold_signals?.length || 0})
               </ToggleGroupItem>
-              <ToggleGroupItem value="all" className="px-6 py-2">
-                <TrendingUp className="w-4 h-4 mr-2" />
+              <ToggleGroupItem
+                value="all"
+                className="px-6 py-2 data-[state=on]:text-blue-800"
+              >
+                <TrendingUp className="w-4 h-4 mr-2 group-data-[state=on]:text-blue-800" />
                 All Signals ({stocks.length || 0})
               </ToggleGroupItem>
-              <ToggleGroupItem value="holdings" className="px-6 py-2">
-                <TrendingUp className="w-4 h-4 mr-2" />
+              <ToggleGroupItem
+                value="holdings"
+                className="px-6 py-2 data-[state=on]:text-blue-800"
+              >
+                <TrendingUp className="w-4 h-4 mr-2 group-data-[state=on]:text-blue-800" />
                 Holdings ({holdingsData.length || 0})
               </ToggleGroupItem>
             </ToggleGroup>
